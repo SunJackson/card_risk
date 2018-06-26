@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
-# 导入需要的库
+from keras.models import Sequential
+from keras.layers import Dense
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-from sklearn import svm
-from sklearn.externals import joblib
-import warnings
-
-warnings.filterwarnings('ignore')
 
 
-# Training data
 app_train = pd.read_csv('./Downloads/application_train.csv')
 print('Training data shape: ', app_train.shape)
 
 # Testing data features
 app_test = pd.read_csv('./Downloads/application_test.csv')
 print('Testing data shape: ', app_test.shape)
+
 
 # From this information, we see this is an [_imbalanced class problem_](http://www.chioka.in/class-imbalance-problem/). There are far more loans that were repaid on time than loans that were not repaid. Once we get into more sophisticated machine learning models, we can [weight the classes](http://xgboost.readthedocs.io/en/latest/parameter.html) by their representation in the data to reflect this imbalance.
 
@@ -118,41 +114,27 @@ print('Testing Features shape: ', app_test.shape)
 test_ID = app_test['SK_ID_CURR']
 app_train.drop(['SK_ID_CURR'], axis=1)
 app_test.drop(['SK_ID_CURR'], axis=1)
-# 不管任何参数，都用默认的，拟合下数据看看
-clf = svm.SVC()
-clf.fit(app_train, train_labels)
-joblib.dump(clf,'Train_SVM2.m')
-pre = clf.predict(app_test)
-print(clf.fit_status_)
+print(train_labels.value_counts())
+model = Sequential()
+
+model.add(Dense(output_dim=100, input_dim=len(app_train.columns), activation='relu'))
+
+model.add(Dense(input_dim=100, output_dim=50, activation='relu'))
+
+model.add(Dense(input_dim=50, output_dim=10, activation='relu'))
+
+model.add(Dense(input_dim=10, output_dim=1, activation='sigmoid'))
+
+model.compile(loss='binary_crossentropy', optimizer='adam')
+
+model.fit(app_train, list(train_labels), epochs=5, verbose=0)
+
+
+# 做预测
+
+pre = model.predict_proba(app_test)
 
 submission = pd.DataFrame({'SK_ID_CURR': test_ID, 'TARGET': pre})
 
-# submission.to_csv('submission.csv', sep=',', index=False)
-# 输出如下：0.9069073951826113  AUC Score (Train): 0.9998490132055681
-# 可见袋外分数已经很高（理解为袋外数据作为验证集时的准确率，也就是模型的泛化能力），而且AUC分数也很高（AUC是指从一堆样本中随机抽一个，
-# 抽到正样本的概率比抽到负样本的概率大的可能性）。相对于GBDT的默认参数输出，RF的默认参数拟合效果对本例要好一些。
+submission.to_csv('submission.csv', sep=',', index=False)
 
-# 首先对n_estimators进行网格搜索
-# param_test1 = {'n_estimators': range(500, 600, 10)}
-# gsearch1 = GridSearchCV(estimator=RandomForestClassifier(min_samples_split=100,
-#                                                          min_samples_leaf=20,
-#                                                          n_jobs=5,
-#                                                          max_depth=10,
-#                                                          max_features='sqrt',
-#                                                          random_state=10),
-#                         param_grid=param_test1, scoring='roc_auc', cv=5)
-# gsearch1.fit(app_train, train_labels)
-# print(gsearch1.cv_results_, gsearch1.best_params_, gsearch1.best_score_)
-
-# 这样我们得到了最佳的弱学习器迭代次数，接着我们对决策树最大深度max_depth和内部节点再划分所需最小样本数
-# min_samples_split进行网格搜索。
-# param_test2 = {'max_depth': range(3, 40, 2), 'min_samples_split': range(1000, 20001, 200)}
-# gsearch2 = GridSearchCV(estimator=RandomForestClassifier(n_estimators=70,
-#                                                          n_jobs=5,
-#                                                          min_samples_leaf=20,
-#                                                          max_features='sqrt',
-#                                                          oob_score=True,
-#                                                          random_state=10),
-#                         param_grid=param_test2, scoring='roc_auc', iid=False, cv=5)
-# gsearch2.fit(app_train, train_labels)
-# gsearch2.cv_results_, gsearch2.best_params_, gsearch2.best_score_
