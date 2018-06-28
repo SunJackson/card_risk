@@ -1,25 +1,30 @@
 # coding: utf-8
-#https://segmentfault.com/a/1190000009101577#articleHeader6
-import numpy as np
-import pandas as pd
+# https://segmentfault.com/a/1190000009101577#articleHeader6
+from sklearn.metrics import roc_auc_score, roc_curve, auc
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold
+from mlxtend.classifier import StackingClassifier
+from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import LabelEncoder
-import os
+from sklearn.ensemble import VotingClassifier
+from sklearn.preprocessing import Imputer
+from sklearn import linear_model
+import matplotlib.pyplot as plt
+from sklearn import metrics
+from itertools import cycle
+from scipy import interp
+import lightgbm as lgb
+import xgboost as xgb
+import pandas as pd
+import numpy as np
 import warnings
+import pickle
+import time
 
 warnings.filterwarnings('ignore')
 
-
-from scipy import interp
-import matplotlib.pyplot as plt
-from itertools import cycle
-import time
-from sklearn.model_selection import GridSearchCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import GradientBoostingClassifier
-import xgboost as xgb
-import lightgbm as lgb
-from mlxtend.classifier import StackingClassifier
-from sklearn import linear_model
 
 
 class Train:
@@ -31,14 +36,11 @@ class Train:
         self.mean_score = {}
         self.mean_time = {}
 
-    def process_data(self):
+    def get_data(self):
         # Training data
         app_train = pd.read_csv('./Downloads/application_train.csv')
-        print('Training data shape: ', app_train.shape)
-
         # Testing data features
         app_test = pd.read_csv('./Downloads/application_test.csv')
-        print('Testing data shape: ', app_test.shape)
 
         def missing_values_table(df):
             # Total missing values
@@ -53,12 +55,10 @@ class Train:
             # Rename the columns
             mis_val_table_ren_columns = mis_val_table.rename(
                 columns={0: 'Missing Values', 1: '% of Total Values'})
-
             # Sort the table by percentage of missing descending
             mis_val_table_ren_columns = mis_val_table_ren_columns[
-                mis_val_table_ren_columns.iloc[:, 1] != 0].sort_values(
+                mis_val_table_ren_columns.iloc[:, 1] >= 30].sort_values(
                 '% of Total Values', ascending=False).round(1)
-
             # Print some summary information
             print("Your selected dataframe has " + str(df.shape[1]) + " columns.\n"
                                                                       "There are " + str(
@@ -70,13 +70,48 @@ class Train:
 
         # Missing values statistics
         missing_values = missing_values_table(app_train)
-        missing_values.head(20)
+        app_train = app_train.drop(list(missing_values.index), axis=1)
+        train_labels = app_train['TARGET']
 
-        # Number of each type of column
-        app_train.dtypes.value_counts()
+        # Align the training and testing data, keep only columns present in both dataframes
+        app_train, app_test = app_train.align(app_test, join='inner', axis=1)
+        app_train.select_dtypes('object').apply(pd.Series.nunique, axis=0)
 
-        # Let's now look at the number of unique entries in each of the `object` (categorical) columns.
+        # Create a label encoder object
+        le = LabelEncoder()
+        le_count = 0
 
+        # Iterate through the columns
+        for col in app_train:
+            if app_train[col].dtype == 'object':
+                # If 2 or fewer unique categories
+                if len(list(app_train[col].unique())) <= 2:
+                    # Train on the training data
+                    le.fit(app_train[col])
+                    # Transform both training and testing data
+                    app_train[col] = le.transform(app_train[col])
+                    app_test[col] = le.transform(app_test[col])
+
+                    # Keep track of how many columns were label encoded
+                    le_count += 1
+
+        print('%d columns were label encoded.' % le_count)
+        app_train = pd.get_dummies(app_train)
+        app_test = pd.get_dummies(app_test)
+
+        app_train['TARGET'] = train_labels
+        mean_pred = np.mean(app_train)
+        app_train.fillna(mean_pred, inplace=True)
+        mean_pred = np.mean(app_test)
+        app_test.fillna(mean_pred, inplace=True)
+
+
+
+    def process_data(self):
+        # Training data
+        app_train = pd.read_csv('./Downloads/application_train.csv')
+        # Testing data features
+        app_test = pd.read_csv('./Downloads/application_test.csv')
         # Number of unique classes in each object column
         app_train.select_dtypes('object').apply(pd.Series.nunique, axis=0)
 
@@ -150,7 +185,7 @@ class Train:
 
         print(
             'There are %d anomalies in the test data out of %d entries' % (
-            app_test["DAYS_EMPLOYED_ANOM"].sum(), len(app_test)))
+                app_test["DAYS_EMPLOYED_ANOM"].sum(), len(app_test)))
 
         correlations = app_train.corr()['TARGET'].sort_values()
 
@@ -168,9 +203,6 @@ class Train:
         poly_features = app_train[['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3', 'DAYS_BIRTH', 'TARGET']]
         poly_features_test = app_test[['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3', 'DAYS_BIRTH']]
 
-        # imputer for handling missing values
-        from sklearn.preprocessing import Imputer
-
         imputer = Imputer(strategy='median')
 
         poly_target = poly_features['TARGET']
@@ -180,8 +212,6 @@ class Train:
         # Need to impute missing values
         poly_features = imputer.fit_transform(poly_features)
         poly_features_test = imputer.transform(poly_features_test)
-
-        from sklearn.preprocessing import PolynomialFeatures
 
         # Create the polynomial object with specified degree
         poly_transformer = PolynomialFeatures(degree=3)
@@ -246,8 +276,7 @@ class Train:
         app_test_domain.to_csv('./data/app_test_domain.csv', index=False)
 
     def kfold_plot(self, train, ytrain, model):
-        from sklearn.model_selection import StratifiedKFold
-        from sklearn.metrics import roc_auc_score, roc_curve, auc
+
         #     kf = StratifiedKFold(y=ytrain, n_folds=5)
         kf = StratifiedKFold(n_splits=5)
         scores = []
@@ -266,9 +295,6 @@ class Train:
             predictions = model(X_train, X_test, y_train)
             end_t = time.time()
             exe_time.append(round(end_t - begin_t, 3))
-            #         model = model
-            #         model.fit(X_train, y_train)
-            #         predictions = model.predict_proba(X_test)[:, 1]
             scores.append(roc_auc_score(y_test.astype(float), predictions))
             fpr, tpr, thresholds = roc_curve(y_test, predictions)
             mean_tpr += interp(mean_fpr, fpr, tpr)
@@ -299,7 +325,7 @@ class Train:
 
     def forest_model(self, X_train, X_test, y_train):
         begin_t = time.time()
-        model = RandomForestClassifier(n_estimators=100, max_features=20, max_depth=8,
+        model = RandomForestClassifier(n_estimators=200, max_features=20, max_depth=8,
                                        random_state=10, n_jobs=4)
         model.fit(X_train, y_train)
         end_t = time.time()
@@ -340,10 +366,8 @@ class Train:
 
         data_source = list(dct_result.keys())
         y_pos = np.arange(len(data_source))
-        # model_auc = [0.910, 0.912, 0.915, 0.922]
         model_auc = list(dct_result.values())
         barlist = plt.bar(y_pos, model_auc, align='center', alpha=0.5)
-        # get the index of highest score
         print(model_auc)
         max_val = max(model_auc)
         print(max_val)
@@ -411,14 +435,36 @@ class Train:
         return clf.best_estimator_
 
     def choose_lgb_model(self, X_train, y_train):
-        tuned_params = [{'objective': ['binary'], 'learning_rate': [0.01, 0.03, 0.05],
-                         'n_estimators': [100, 150, 200], 'max_depth': [4, 6, 8]}]
+        tuned_params = [{'objective': ['binary'], 'learning_rate': [0.01, 0.03, 0.05, 0.1],
+                         'n_estimators': [100, 150, 200, 400], 'max_depth': [4, 6, 8, 10]}]
         begin_t = time.time()
         clf = GridSearchCV(lgb.LGBMClassifier(seed=7), tuned_params, scoring='roc_auc')
         clf.fit(X_train, y_train)
         end_t = time.time()
         print('train time: ', round(end_t - begin_t, 3), 's')
         print('current best parameters of lgb: ', clf.best_params_)
+        return clf.best_estimator_
+
+    def choose_forest_model(self, X_train, y_train):
+        tuned_params = [
+            {'n_estimators': [100, 150, 200, 250], 'max_features': [8, 15, 30, 60], 'max_depth': [4, 8, 10, 12]}]
+        begin_t = time.time()
+        clf = GridSearchCV(RandomForestClassifier(random_state=7), tuned_params, scoring='roc_auc', n_jobs=4)
+        clf.fit(X_train, y_train)
+        end_t = time.time()
+        print('train time: ', round(end_t - begin_t, 3), 's')
+        print('current best parameters: ', clf.best_params_)
+        return clf.best_estimator_
+
+    def choose_gradient_model(self, X_train, y_train):
+        tuned_params = [{'n_estimators': [100, 150, 200], 'learning_rate': [0.03, 0.05, 0.07],
+                         'min_samples_leaf': [8, 15, 30], 'max_depth': [4, 6, 8]}]
+        begin_t = time.time()
+        clf = GridSearchCV(GradientBoostingClassifier(random_state=7), tuned_params, scoring='roc_auc')
+        clf.fit(X_train, y_train)
+        end_t = time.time()
+        print('train time: ', round(end_t - begin_t, 3), 's')
+        print('current best parameters: ', clf.best_params_)
         return clf.best_estimator_
 
     def stacking_model(self, X_train, X_test, y_train, bst_xgb, bst_lgb):
@@ -431,7 +477,6 @@ class Train:
         :param bst_lgb:
         :return:
         '''
-
         lr = linear_model.LogisticRegression(random_state=7)
         sclf = StackingClassifier(classifiers=[bst_xgb, bst_lgb], use_probas=True, average_probas=False,
                                   meta_classifier=lr)
@@ -439,46 +484,100 @@ class Train:
         predictions = sclf.predict_proba(X_test)[:, 1]
         return predictions
 
-    def choose_forest_model(self, X_train, y_train):
-        tuned_params = [{'n_estimators': [100, 150, 200], 'max_features': [8, 15, 30], 'max_depth': [4, 8, 10]}]
-        begin_t = time.time()
-        clf = GridSearchCV(RandomForestClassifier(random_state=7), tuned_params, scoring='roc_auc')
-        clf.fit(X_train, y_train)
-        end_t = time.time()
-        print('train time: ', round(end_t - begin_t, 3), 's')
-        print('current best parameters: ', clf.best_params_)
-        return clf.best_estimator_
+    def stacking_model2(self, X_train, X_test, y_train, bst_xgb, bst_forest, bst_gradient, bst_lgb):
+        '''
+        组合四种算法
+        :param X_train: 训练集
+        :param X_test: 测试集
+        :param y_train: 训练标签
+        :param bst_xgb: xgb最优参数
+        :param bst_forest: forest最优参数
+        :param bst_gradient: gradient最优参数
+        :param bst_lgb: lgb最优参数
+        :return: 预测结果
+        '''
+        lr = linear_model.LogisticRegression(random_state=7)
+        sclf = StackingClassifier(classifiers=[bst_xgb, bst_forest, bst_gradient, bst_lgb], use_probas=True,
+                                  average_probas=False, meta_classifier=lr)
+        sclf.fit(X_train, y_train)
+        predictions = sclf.predict_proba(X_test)[:, 1]
+        return predictions
+
+    def voting_model(self, X_train, X_test, y_train, bst_xgb, bst_forest, bst_gradient, bst_lgb):
+
+        vclf = VotingClassifier(estimators=[('xgb', bst_xgb), ('rf', bst_forest), ('gbm', bst_gradient),
+                                            ('lgb', bst_lgb)], voting='soft', weights=[2, 1, 1, 2])
+        vclf.fit(X_train, y_train)
+        predictions = vclf.predict_proba(X_test)[:, 1]
+        return predictions
+
+    def submit(self, X_train, X_test, y_train, test_ids):
+        '''
+        TODO 提交
+        :param X_train:
+        :param X_test:
+        :param y_train:
+        :param test_ids:
+        :return:
+        '''
+        predictions = self.voting_model(X_train, X_test, y_train)
+
+        sub = pd.read_csv('sampleSubmission.csv')
+        result = pd.DataFrame()
+        result['bidder_id'] = test_ids
+        result['outcome'] = predictions
+        sub = sub.merge(result, on='bidder_id', how='left')
+
+        # Fill missing values with mean
+        mean_pred = np.median(predictions)
+        sub.fillna(mean_pred, inplace=True)
+
+        sub.drop('prediction', 1, inplace=True)
+        sub.to_csv('result.csv', index=False, header=['bidder_id', 'prediction'])
 
     def init_data(self):
-        app_train_domain = pd.read_csv('./data/poly_features.csv')
-        self.test_full = pd.read_csv('./data/poly_features_test.csv')
+        app_train_domain = pd.read_csv('./data/app_train_domain.csv')
+        self.test_full = pd.read_csv('./data/app_test_domain.csv')
         self.ytrain = app_train_domain['TARGET']
         self.train_full = app_train_domain.drop(columns='TARGET')
-        print(self.train_full.shape)
-        print(self.test_full.shape)
 
     def main(self, model_name, model):
-        self.dct_scores[model_name], self.mean_score[model_name], self.mean_time[model_name] = self.kfold_plot(self.train_full, self.ytrain, model)
+        self.dct_scores[model_name], self.mean_score[model_name], self.mean_time[model_name] = self.kfold_plot(
+            self.train_full, self.ytrain, model)
 
     def run(self):
-        model_map = {
-            'forest': self.forest_model,
-            'gbm': self.gradient_model,
-            'xgboost': self.xgboost_model,
-            'lgbm': self.lightgbm_model
-        }
-        for (key, value) in model_map.items():
-            self.main(key, value)
-        # 比较四个模型在交叉验证机上的roc_auc平均得分和模型训练的时间
-        print(self.mean_score)
-        self.plot_model_comp('Model Performance', 'roc-auc score', self.mean_score)
-        self.plot_time_comp('Time of Building Model', 'time(s)', self.mean_time)
-        self.plot_auc_score(self.dct_scores)
+        # model_map = {
+        #     'forest': self.forest_model,
+        #     # 'gbm': self.gradient_model,
+        #     'xgboost': self.xgboost_model,
+        #     'lgbm': self.lightgbm_model
+        # }
+        # for (key, value) in model_map.items():
+        #     self.main(key, value)
+        # # 比较四个模型在交叉验证机上的roc_auc平均得分和模型训练的时间
+        # print(self.mean_score)
+        # self.plot_model_comp('Model Performance', 'roc-auc score', self.mean_score)
+        # self.plot_time_comp('Time of Building Model', 'time(s)', self.mean_time)
+        # self.plot_auc_score(self.dct_scores)
+        # self.choose_forest_model(self.train_full, self.ytrain)
+        SK_ID_CURR = self.test_full['SK_ID_CURR']
+        self.test_full = self.test_full.drop(['SK_ID_CURR'],axis=1)
+        self.train_full = self.train_full.drop(['SK_ID_CURR'], axis=1)
 
+        bst_xgb = self.choose_xgb_model(self.train_full, self.ytrain)
+        bst_forest = self.choose_forest_model(self.train_full, self.ytrain)
+        bst_gradient = self.choose_gradient_model(self.train_full, self.ytrain)
+        bst_lgb = self.choose_lgb_model(self.train_full, self.ytrain)
+
+
+        sub = pd.DataFrame()
+        sub['SK_ID_CURR'] = SK_ID_CURR
+        sub['TARGET'] = self.voting_model(self.train_full, self.test_full, self.ytrain, bst_xgb, bst_forest, bst_gradient, bst_lgb)
+        sub.to_csv('./data/sub.csv', index=False)
 
 
 train = Train()
 # train.process_data()
-#
+# train.get_data()
 train.init_data()
 train.run()
