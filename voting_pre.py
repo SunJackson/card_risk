@@ -10,6 +10,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import VotingClassifier
 from sklearn.preprocessing import Imputer
+from sklearn import preprocessing
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 from sklearn import metrics
@@ -427,7 +428,7 @@ class Train:
         tuned_params = [{'objective': ['binary:logistic'], 'learning_rate': [0.01, 0.03, 0.05],
                          'n_estimators': [100, 150, 200], 'max_depth': [4, 6, 8]}]
         begin_t = time.time()
-        clf = GridSearchCV(xgb.XGBClassifier(seed=7), tuned_params, scoring='roc_auc')
+        clf = GridSearchCV(xgb.XGBClassifier(seed=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
         end_t = time.time()
         print('train time: ', round(end_t - begin_t, 3), 's')
@@ -438,7 +439,7 @@ class Train:
         tuned_params = [{'objective': ['binary'], 'learning_rate': [0.01, 0.03, 0.05, 0.1],
                          'n_estimators': [100, 150, 200, 400], 'max_depth': [4, 6, 8, 10]}]
         begin_t = time.time()
-        clf = GridSearchCV(lgb.LGBMClassifier(seed=7), tuned_params, scoring='roc_auc')
+        clf = GridSearchCV(lgb.LGBMClassifier(seed=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
         end_t = time.time()
         print('train time: ', round(end_t - begin_t, 3), 's')
@@ -449,7 +450,7 @@ class Train:
         tuned_params = [
             {'n_estimators': [100, 150, 200, 250], 'max_features': [8, 15, 30, 60], 'max_depth': [4, 8, 10, 12]}]
         begin_t = time.time()
-        clf = GridSearchCV(RandomForestClassifier(random_state=7), tuned_params, scoring='roc_auc', n_jobs=4)
+        clf = GridSearchCV(RandomForestClassifier(random_state=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
         end_t = time.time()
         print('train time: ', round(end_t - begin_t, 3), 's')
@@ -460,7 +461,7 @@ class Train:
         tuned_params = [{'n_estimators': [100, 150, 200], 'learning_rate': [0.03, 0.05, 0.07],
                          'min_samples_leaf': [8, 15, 30], 'max_depth': [4, 6, 8]}]
         begin_t = time.time()
-        clf = GridSearchCV(GradientBoostingClassifier(random_state=7), tuned_params, scoring='roc_auc')
+        clf = GridSearchCV(GradientBoostingClassifier(random_state=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
         end_t = time.time()
         print('train time: ', round(end_t - begin_t, 3), 's')
@@ -540,6 +541,11 @@ class Train:
         self.test_full = pd.read_csv('./data/app_test_domain.csv')
         self.ytrain = app_train_domain['TARGET']
         self.train_full = app_train_domain.drop(columns='TARGET')
+        mean_pred = np.mean(self.train_full)
+        self.train_full.fillna(mean_pred, inplace=True)
+        mean_pred = np.mean(self.test_full)
+        self.test_full.fillna(mean_pred, inplace=True)
+
 
     def main(self, model_name, model):
         self.dct_scores[model_name], self.mean_score[model_name], self.mean_time[model_name] = self.kfold_plot(
@@ -561,8 +567,14 @@ class Train:
         # self.plot_auc_score(self.dct_scores)
         # self.choose_forest_model(self.train_full, self.ytrain)
         SK_ID_CURR = self.test_full['SK_ID_CURR']
-        self.test_full = self.test_full.drop(['SK_ID_CURR'],axis=1)
+
+        self.test_full = self.test_full.drop(['SK_ID_CURR'], axis=1)
         self.train_full = self.train_full.drop(['SK_ID_CURR'], axis=1)
+
+        # 数据归一化
+        scaler = preprocessing.StandardScaler().fit(self.train_full)
+        self.train_full = scaler.transform(self.train_full)
+        self.test_full = scaler.transform(self.test_full)
 
         bst_xgb = self.choose_xgb_model(self.train_full, self.ytrain)
         bst_forest = self.choose_forest_model(self.train_full, self.ytrain)
