@@ -271,9 +271,9 @@ def kfold_lightgbm(df, num_folds, stratified=False, debug=False):
     gc.collect()
     # Cross validation model
     if stratified:
-        folds = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=47)
+        folds = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=50)
     else:
-        folds = KFold(n_splits=num_folds, shuffle=True, random_state=47)
+        folds = KFold(n_splits=num_folds, shuffle=True, random_state=50)
     # Create arrays and dataframes to store results
     oof_preds = np.zeros(train_df.shape[0])
     sub_preds = np.zeros(test_df.shape[0])
@@ -286,10 +286,10 @@ def kfold_lightgbm(df, num_folds, stratified=False, debug=False):
 
         # LightGBM parameters found by Bayesian optimization
         clf = LGBMClassifier(
-            nthread=4,
+            nthread=10,
             # is_unbalance=True,
             n_estimators=10000,
-            learning_rate=0.02,
+            learning_rate=0.01,
             num_leaves=32,
             colsample_bytree=0.9497036,
             subsample=0.8715623,
@@ -321,7 +321,7 @@ def kfold_lightgbm(df, num_folds, stratified=False, debug=False):
     print('Full AUC score %.6f' % roc_auc_score(train_df['TARGET'], oof_preds))
     # Write submission file and plot feature importance
     if not debug:
-        test_df.loc['TARGET'] = sub_preds
+        test_df['TARGET'] = sub_preds
         test_df[['SK_ID_CURR', 'TARGET']].to_csv(submission_file_name, index=False)
     display_importances(feature_importance_df)
     return feature_importance_df
@@ -374,7 +374,7 @@ def main(debug=False):
         del cc
         gc.collect()
     with timer("Run LightGBM with kfold"):
-        feat_importance = kfold_lightgbm(df, num_folds=5, stratified=False, debug=debug)
+        feat_importance = kfold_lightgbm(df, num_folds=10, stratified=False, debug=debug)
 
 
 if __name__ == "__main__":
