@@ -55,13 +55,6 @@ def missing_values_table(df):
 
 # Missing values statistics
 missing_values = missing_values_table(app_train)
-missing_values.head(20)
-
-# Number of each type of column
-app_train.dtypes.value_counts()
-
-# Let's now look at the number of unique entries in each of the `object` (categorical) columns.
-
 
 # Number of unique classes in each object column
 app_train.select_dtypes('object').apply(pd.Series.nunique, axis=0)
@@ -85,7 +78,6 @@ for col in app_train:
             le_count += 1
 
 print('%d columns were label encoded.' % le_count)
-
 
 '''
 离散特征的编码分为两种情况：
@@ -131,7 +123,6 @@ app_train['DAYS_EMPLOYED'].describe()
 
 app_train['DAYS_EMPLOYED'].plot.hist(title='Days Employment Histogram')
 
-
 anom = app_train[app_train['DAYS_EMPLOYED'] == 365243]
 non_anom = app_train[app_train['DAYS_EMPLOYED'] != 365243]
 print('The non-anomalies default on %0.2f%% of loans' % (100 * non_anom['TARGET'].mean()))
@@ -172,7 +163,6 @@ age_data['YEARS_BIRTH'] = age_data['DAYS_BIRTH'] / 365
 
 # Bin the age data
 age_data['YEARS_BINNED'] = pd.cut(age_data['YEARS_BIRTH'], bins=np.linspace(20, 70, num=11))
-age_data.head(10)
 
 # Group by the bin and calculate averages
 age_groups = age_data.groupby('YEARS_BINNED').mean()
@@ -188,8 +178,6 @@ for i, source in enumerate(['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3']):
     print(dropnan.loc[app_train['TARGET'] == 0, source])
     print(dropnan.loc[app_train['TARGET'] == 1, source])
 
-
-
 # Copy the data for plotting
 plot_data = ext_data.drop(columns=['DAYS_BIRTH']).copy()
 
@@ -198,8 +186,6 @@ plot_data['YEARS_BIRTH'] = age_data['YEARS_BIRTH']
 
 # Drop na values and limit to first 100000 rows
 plot_data = plot_data.dropna().loc[:100000, :]
-
-
 
 # Make a new dataframe for polynomial features
 poly_features = app_train[['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3', 'DAYS_BIRTH', 'TARGET']]
@@ -274,15 +260,13 @@ app_test_domain['ANNUITY_INCOME_PERCENT'] = app_test_domain['AMT_ANNUITY'] / app
 app_test_domain['CREDIT_TERM'] = app_test_domain['AMT_ANNUITY'] / app_test_domain['AMT_CREDIT']
 app_test_domain['DAYS_EMPLOYED_PERCENT'] = app_test_domain['DAYS_EMPLOYED'] / app_test_domain['DAYS_BIRTH']
 
-app_train_domain = app_train_domain.drop(columns='TARGET')
-
 from sklearn.model_selection import KFold
 from sklearn.metrics import roc_auc_score
 import lightgbm as lgb
 import gc
 
 
-def model(features, test_features, encoding='ohe', n_folds=10):
+def model(features, test_features, encoding='ohe', n_folds=5):
     """Train and test a light gradient boosting model using
     cross validation. 
     
@@ -311,11 +295,10 @@ def model(features, test_features, encoding='ohe', n_folds=10):
     """
 
     # Extract the ids
-    train_ids = features['SK_ID_CURR']
     test_ids = test_features['SK_ID_CURR']
 
     # Extract the labels for training
-    labels = features['TARGET']
+    labels = np.array(features['TARGET'])
 
     # Remove the ids and target
     features = features.drop(columns=['SK_ID_CURR', 'TARGET'])
@@ -366,7 +349,7 @@ def model(features, test_features, encoding='ohe', n_folds=10):
     test_features = np.array(test_features)
 
     # Create the kfold object
-    k_fold = KFold(n_splits=n_folds, shuffle=True, random_state=50)
+    k_fold = KFold(n_splits=n_folds, shuffle=True)
 
     # Empty array for feature importances
     feature_importance_values = np.zeros(len(feature_names))
@@ -389,8 +372,8 @@ def model(features, test_features, encoding='ohe', n_folds=10):
         valid_features, valid_labels = features[valid_indices], labels[valid_indices]
 
         # Create the model
-        model = lgb.LGBMClassifier(n_estimators=10000, objective='binary',
-                                   class_weight='balanced', learning_rate=0.05,
+        model = lgb.LGBMClassifier(n_estimators=1500, objective='binary',
+                                   class_weight='balanced', learning_rate=0.01,
                                    reg_alpha=0.1, reg_lambda=0.1,
                                    subsample=0.8, n_jobs=-1, random_state=50)
 
@@ -449,15 +432,39 @@ def model(features, test_features, encoding='ohe', n_folds=10):
     return submission, feature_importances, metrics
 
 
-submission, fi, metrics = model(app_train, app_test )
-print('Baseline metrics')
-print(metrics)
+# submission, fi, metrics = model(app_train, app_test, encoding='le')
+# print('Baseline metrics')
+# print(metrics)
+# submission.to_csv('./submission/baseline_lgb.csv', index=False)
 
-submission.to_csv('baseline_lgb.csv', index=False)
+# app_train_domain['TARGET'] = train_labels
 
-app_train_domain['TARGET'] = train_labels
+# submission_domain, fi_domain, metrics_domain = model(app_train_domain, app_test_domain, encoding='le')
+# print('Baseline with domain knowledge features metrics')
+# print(metrics_domain)
+# submission_domain.to_csv('./submission/baseline_lgb_domain_features.csv', index=False)
 
-submission_domain, fi_domain, metrics_domain = model(app_train_domain, app_test_domain)
-print('Baseline with domain knowledge features metrics')
-print(metrics_domain)
-submission_domain.to_csv('baseline_lgb_domain_features.csv', index=False)
+
+def get_sample_train_data(app_train_data):
+    len_1 = len(app_train_data[app_train_data['TARGET'] == 1])
+    app_train_0 = app_train_data[app_train_data['TARGET'] == 0].sample(len_1 * 2)
+    app_train_1 = app_train_data[app_train_data['TARGET'] == 1]
+    new_app_train = pd.concat([app_train_0, app_train_1])
+    new_app_train = new_app_train.sample(len_1 * 2)
+    return new_app_train
+
+
+if __name__ == '__main__':
+    import uuid
+
+    num = 10
+    result = pd.DataFrame()
+    submission_domain = pd.DataFrame()
+    for i in range(num):
+        train_data = get_sample_train_data(app_train_domain)
+        submission, fi, metrics = model(train_data, app_test_domain)
+        result[uuid.uuid1().hex] = submission['TARGET']
+    result.to_csv('./submission/result.csv', index=False)
+    submission_domain['SK_ID_CURR'] = app_test_domain['SK_ID_CURR']
+    submission_domain['TARGET'] = result.apply(lambda x: np.array(x).sum() / float(num), axis=1)
+    submission_domain.to_csv('./submission/baseline_lgb_domain_features.csv', index=False)

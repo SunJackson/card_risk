@@ -11,6 +11,9 @@ import seaborn as sns
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
+from sqlalchemy import create_engine
+
+engine = create_engine('mysql+pymysql://root:yunfangdata@10.30.1.7:3306/spark_test?charset=utf8')
 
 
 @contextmanager
@@ -373,11 +376,12 @@ def main(debug=False):
         df = df.join(cc, how='left', on='SK_ID_CURR')
         del cc
         gc.collect()
+    df.to_csv('./data/lightGBM.csv', index=False, encoding='utf8')
     with timer("Run LightGBM with kfold"):
         feat_importance = kfold_lightgbm(df, num_folds=10, stratified=False, debug=debug)
 
 
 if __name__ == "__main__":
-    submission_file_name = "submission_kernel02.csv"
+    submission_file_name = "submission_kernel.csv"
     with timer("Full model run"):
         main()

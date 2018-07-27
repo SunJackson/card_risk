@@ -21,21 +21,26 @@ import xgboost as xgb
 import pandas as pd
 import numpy as np
 import warnings
-import pickle
+import uuid
+from sklearn.externals import joblib
 import time
 
 warnings.filterwarnings('ignore')
-
 
 
 class Train:
     def __init__(self):
         self.train_full = pd.DataFrame()
         self.test_full = pd.DataFrame()
-        self.ytrain = pd.Series()
+        self.app_train = pd.DataFrame()
+        self.app_test = pd.DataFrame()
+        self.result = pd.DataFrame()
+        self.SK_ID_CURR = []
+        self.ytrain = pd.DataFrame()
         self.dct_scores = {}
         self.mean_score = {}
         self.mean_time = {}
+        self.num = 0
 
     def get_data(self):
         # Training data
@@ -105,8 +110,6 @@ class Train:
         app_train.fillna(mean_pred, inplace=True)
         mean_pred = np.mean(app_test)
         app_test.fillna(mean_pred, inplace=True)
-
-
 
     def process_data(self):
         # Training data
@@ -351,9 +354,10 @@ class Train:
 
     def lightgbm_model(self, X_train, X_test, y_train):
         X_train = lgb.Dataset(X_train.values, y_train.values)
-        params = {'objective': 'binary', 'metric': {'auc'}, 'learning_rate': 0.01, 'max_depth': 8, 'seed': 7}
+        params = {'objective': 'binary', 'metric': {'auc'}, 'learning_rate': 0.05, 'max_depth': 8, 'seed': 7}
         model = lgb.train(params, X_train, num_boost_round=600)
         predictions = model.predict(X_test)
+
         return predictions
 
     def plot_model_comp(self, title, y_label, dct_result):
@@ -425,8 +429,8 @@ class Train:
         :param y_train:
         :return:
         '''
-        tuned_params = [{'objective': ['binary:logistic'], 'learning_rate': [0.01, 0.03, 0.05],
-                         'n_estimators': [100, 150, 200], 'max_depth': [4, 6, 8]}]
+        tuned_params = [{'objective': ['binary:logistic'], 'learning_rate': [0.05],
+                         'n_estimators': [200], 'max_depth': [8]}]
         begin_t = time.time()
         clf = GridSearchCV(xgb.XGBClassifier(seed=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
@@ -436,8 +440,8 @@ class Train:
         return clf.best_estimator_
 
     def choose_lgb_model(self, X_train, y_train):
-        tuned_params = [{'objective': ['binary'], 'learning_rate': [0.01, 0.03, 0.05, 0.1],
-                         'n_estimators': [100, 150, 200, 400], 'max_depth': [4, 6, 8, 10]}]
+        tuned_params = [{'objective': ['binary'], 'learning_rate': [0.05],
+                         'n_estimators': [200], 'max_depth': [8]}]
         begin_t = time.time()
         clf = GridSearchCV(lgb.LGBMClassifier(seed=7), tuned_params, scoring='roc_auc', n_jobs=10)
         clf.fit(X_train, y_train)
@@ -479,10 +483,11 @@ class Train:
         :return:
         '''
         lr = linear_model.LogisticRegression(random_state=7)
-        sclf = StackingClassifier(classifiers=[bst_xgb, bst_lgb], use_probas=True, average_probas=False,
+        sclf = StackingClassifier(classifiers=[bst_lgb], use_probas=True, average_probas=False,
                                   meta_classifier=lr)
         sclf.fit(X_train, y_train)
         predictions = sclf.predict_proba(X_test)[:, 1]
+        joblib.dump(sclf, "./models/train_model_{}.m".format(self.num))
         return predictions
 
     def stacking_model2(self, X_train, X_test, y_train, bst_xgb, bst_forest, bst_gradient, bst_lgb):
@@ -512,46 +517,127 @@ class Train:
         predictions = vclf.predict_proba(X_test)[:, 1]
         return predictions
 
-    def submit(self, X_train, X_test, y_train, test_ids):
-        '''
-        TODO 提交
-        :param X_train:
-        :param X_test:
-        :param y_train:
-        :param test_ids:
-        :return:
-        '''
-        predictions = self.voting_model(X_train, X_test, y_train)
-
-        sub = pd.read_csv('sampleSubmission.csv')
-        result = pd.DataFrame()
-        result['bidder_id'] = test_ids
-        result['outcome'] = predictions
-        sub = sub.merge(result, on='bidder_id', how='left')
-
-        # Fill missing values with mean
-        mean_pred = np.median(predictions)
-        sub.fillna(mean_pred, inplace=True)
-
-        sub.drop('prediction', 1, inplace=True)
-        sub.to_csv('result.csv', index=False, header=['bidder_id', 'prediction'])
+    def get_sample_train_data(self, app_train):
+        len_1 = len(app_train[app_train['TARGET'] == 1])
+        app_train_0 = app_train[app_train['TARGET'] == 0].sample(len_1 * 3)
+        app_train_1 = app_train[app_train['TARGET'] == 1]
+        new_app_train = pd.concat([app_train_0, app_train_1])
+        new_app_train = new_app_train.sample(len_1 * 2)
+        return new_app_train
 
     def init_data(self):
-        app_train_domain = pd.read_csv('./data/app_train_domain.csv')
-        self.test_full = pd.read_csv('./data/app_test_domain.csv')
-        self.ytrain = app_train_domain['TARGET']
-        self.train_full = app_train_domain.drop(columns='TARGET')
+        self.app_train = pd.read_csv('./data/app_train_domain.csv')
+        self.app_test = pd.read_csv('./data/app_test_domain.csv')
+        self.SK_ID_CURR = self.app_test['SK_ID_CURR']
+
+    def keras_model(self, app_train, app_test, train_labels, test_ID):
+        from keras.models import Sequential
+        from keras.layers.core import Dense, Activation
+        train_data = app_train.as_matrix()
+        test_data = app_test.as_matrix()
+        model = Sequential()
+
+        model.add(Dense(input_dim=len(app_train.columns), output_dim=240))  # 添加输入层、隐藏层的连接
+        model.add(Activation('relu'))  # 以Relu函数为激活函数
+        model.add(Dense(input_dim=240, output_dim=120))  # 添加隐藏层、隐藏层的连接
+        model.add(Activation('relu'))  # 以Relu函数为激活函数
+        model.add(Dense(input_dim=120, output_dim=80))  # 添加隐藏层、隐藏层的连接
+        model.add(Activation('relu'))  # 以Relu函数为激活函数
+        model.add(Dense(input_dim=20, output_dim=1))  # 添加隐藏层、隐藏层的连接
+        model.add(Activation('sigmoid'))  # 以sigmoid函数为激活函数
+        # 编译模型，损失函数为binary_crossentropy，用adam法求解
+        model.compile(loss='binary_crossentropy', optimizer='adam')
+
+        model.fit(train_data, list(train_labels), epochs=80, batch_size=100)  # 训练模型
+
+        model.save_weights('./models/models_{}.model'.format(self.num))  # 保存模型参数
+
+        # 做预测
+
+        pre = model.predict_proba(test_data)
+
+        submission = pd.DataFrame({'SK_ID_CURR': list(test_ID), 'TARGET': np.ravel(pre)})
+
+        submission.to_csv('submission_{}.csv'.format(self.num), sep=',', index=False)
+
+    def train_data_sample(self):
+        self.train_full = self.get_sample_train_data(self.app_train)
+        print(self.train_full)
+        self.ytrain = self.train_full['TARGET']
+        self.train_full = self.train_full.drop(columns='TARGET')
+
         mean_pred = np.mean(self.train_full)
         self.train_full.fillna(mean_pred, inplace=True)
         mean_pred = np.mean(self.test_full)
         self.test_full.fillna(mean_pred, inplace=True)
+        self.test_full = self.test_full.drop(['SK_ID_CURR'], axis=1)
+        self.train_full = self.train_full.drop(['SK_ID_CURR'], axis=1)
 
+        # 数据归一化
+        scaler = preprocessing.StandardScaler().fit(self.train_full)
+        self.train_full = pd.DataFrame(scaler.transform(self.train_full))
+        self.test_full = pd.DataFrame(scaler.transform(self.test_full))
+        bst_xgb = self.choose_xgb_model(self.train_full, self.ytrain)
+        bst_forest = self.choose_forest_model(self.train_full, self.ytrain)
+        bst_gradient = self.choose_gradient_model(self.train_full, self.ytrain)
+        bst_lgb = self.choose_lgb_model(self.train_full, self.ytrain)
+
+        self.result[uuid.uuid1().hex] = self.stacking_model(self.train_full, self.test_full, self.ytrain, bst_xgb,
+                                                            bst_lgb)
+
+        scores, scores1, exe_time = self.kfold_plot(
+            self.train_full, self.ytrain, self.lightgbm_model)
+        print(scores, scores1, exe_time)
+
+    def train_keras_standard(self):
+        train_data = self.get_sample_train_data(self.app_train)
+        test_data = self.test_full
+
+        train_labels = train_data['TARGET']
+        train_data = train_data.drop(columns=['TARGET'], axis=1)
+
+        mean_pred = np.mean(train_data)
+        train_data.fillna(mean_pred, inplace=True)
+        train_data = train_data.drop(columns=['SK_ID_CURR'], axis=1)
+
+        mean_pred = np.mean(test_data)
+        test_data.fillna(mean_pred, inplace=True)
+        test_data = test_data.drop(columns=['SK_ID_CURR'], axis=1)
+
+        # 数据归一化
+        scaler = preprocessing.StandardScaler().fit(train_data)
+        train_data = pd.DataFrame(scaler.transform(train_data))
+        test_data = pd.DataFrame(scaler.transform(test_data))
+        self.keras_model(train_data, test_data, train_labels, self.SK_ID_CURR)
 
     def main(self, model_name, model):
         self.dct_scores[model_name], self.mean_score[model_name], self.mean_time[model_name] = self.kfold_plot(
             self.train_full, self.ytrain, model)
 
+    def lightGBM_train(self, num):
+
+        for i in range(num):
+            print(i)
+            self.num = i
+            self.train_data_sample()
+
+    def lightGBM_pre(self, num):
+        self.test_full = self.test_full.drop(['SK_ID_CURR'], axis=1)
+        self.train_full = self.train_full.drop(['SK_ID_CURR'], axis=1)
+        result = pd.DataFrame()
+        sub_data = pd.read_csv('result.csv', index_col=['0'])
+        result['SK_ID_CURR'] = self.SK_ID_CURR
+        result['TARGET'] = sub_data.apply(lambda x: np.array(x).sum() / float(num), axis=1)
+        result.to_csv('submission.csv', sep=',', index=False)
+
+    def keras_train(self, num):
+        for i in range(num):
+            print(i)
+            self.num = i
+            self.train_keras_standard()
+
     def run(self):
+        num = 100
         # model_map = {
         #     'forest': self.forest_model,
         #     # 'gbm': self.gradient_model,
@@ -566,26 +652,11 @@ class Train:
         # self.plot_time_comp('Time of Building Model', 'time(s)', self.mean_time)
         # self.plot_auc_score(self.dct_scores)
         # self.choose_forest_model(self.train_full, self.ytrain)
-        SK_ID_CURR = self.test_full['SK_ID_CURR']
-
-        self.test_full = self.test_full.drop(['SK_ID_CURR'], axis=1)
-        self.train_full = self.train_full.drop(['SK_ID_CURR'], axis=1)
-
-        # 数据归一化
-        scaler = preprocessing.StandardScaler().fit(self.train_full)
-        self.train_full = scaler.transform(self.train_full)
-        self.test_full = scaler.transform(self.test_full)
-
-        bst_xgb = self.choose_xgb_model(self.train_full, self.ytrain)
-        bst_forest = self.choose_forest_model(self.train_full, self.ytrain)
-        bst_gradient = self.choose_gradient_model(self.train_full, self.ytrain)
-        bst_lgb = self.choose_lgb_model(self.train_full, self.ytrain)
-
-
-        sub = pd.DataFrame()
-        sub['SK_ID_CURR'] = SK_ID_CURR
-        sub['TARGET'] = self.voting_model(self.train_full, self.test_full, self.ytrain, bst_xgb, bst_forest, bst_gradient, bst_lgb)
-        sub.to_csv('./data/sub.csv', index=False)
+        self.train_full = self.app_train.copy()
+        self.test_full = self.app_test.copy()
+        # self.lightGBM_train(num)
+        # self.lightGBM_pre(num)
+        self.keras_train(num)
 
 
 train = Train()

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 from keras.models import Sequential
-from keras.layers import Dense
+from keras.layers.core import Dense, Activation
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import LabelEncoder
-
 
 app_train = pd.read_csv('./Downloads/application_train.csv')
 print('Training data shape: ', app_train.shape)
@@ -112,29 +112,26 @@ print('Training Features shape: ', app_train.shape)
 print('Testing Features shape: ', app_test.shape)
 
 test_ID = app_test['SK_ID_CURR']
-app_train.drop(['SK_ID_CURR'], axis=1)
-app_test.drop(['SK_ID_CURR'], axis=1)
+train_data = app_train.drop(['SK_ID_CURR'], axis=1).as_matrix()
+test_data = app_test.drop(['SK_ID_CURR'], axis=1).as_matrix()
 print(train_labels.value_counts())
 model = Sequential()
 
-model.add(Dense(output_dim=100, input_dim=len(app_train.columns), activation='relu'))
+model.add(Dense(input_dim=len(app_train.columns) - 1, output_dim=240))  # 添加输入层、隐藏层的连接
+model.add(Activation('relu'))  # 以Relu函数为激活函数
+model.add(Dense(input_dim=240, output_dim=120))  # 添加隐藏层、隐藏层的连接
+model.add(Activation('relu'))  # 以Relu函数为激活函数
+model.add(Dense(input_dim=20, output_dim=1)) # 添加隐藏层、隐藏层的连接
+model.add(Activation('sigmoid'))  # 以sigmoid函数为激活函数
+# 编译模型，损失函数为binary_crossentropy，用adam法求解
+model.compile(loss='mean_squared_error', optimizer='adam')
 
-model.add(Dense(input_dim=100, output_dim=50, activation='relu'))
-
-model.add(Dense(input_dim=50, output_dim=10, activation='relu'))
-
-model.add(Dense(input_dim=10, output_dim=1, activation='sigmoid'))
-
-model.compile(loss='binary_crossentropy', optimizer='adam')
-
-model.fit(app_train, list(train_labels), epochs=5, verbose=0)
-
+model.fit(train_data, list(train_labels), epochs=2, batch_size=1000)  # 训练模型
 
 # 做预测
 
-pre = model.predict_proba(app_test)
+pre = model.predict_proba(test_data)
 
-submission = pd.DataFrame({'SK_ID_CURR': test_ID, 'TARGET': pre})
+submission = pd.DataFrame({'SK_ID_CURR': list(test_ID), 'TARGET': np.ravel(pre)})
 
 submission.to_csv('submission.csv', sep=',', index=False)
-
